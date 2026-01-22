@@ -18,7 +18,7 @@ class Room:
 class GameServer:
     def __init__(self):
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_sock.bind(('0.0.0.0', utils.TCP_jogo-1.0PORT))
+        self.tcp_sock.bind(('0.0.0.0', utils.TCP_PORT))
         self.tcp_sock.listen()
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
