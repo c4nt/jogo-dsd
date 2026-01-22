@@ -74,6 +74,12 @@ def main():
             if rid:
                 tcp.send(f"{utils.CMD_JOIN}:{rid}".encode())
                 resp = tcp.recv(utils.BUFFER_SIZE).decode()
+                if resp == "JOIN_OK":                  # <--- MUDOU AQUI (Era só verificar erro antes)
+                    print("Entrando na sala...")
+                    in_lobby = False
+                elif resp.startswith(utils.CMD_ERROR):
+                    print(f"Erro: {resp}")
+                    time.sleep(2)
                 if resp.startswith(utils.CMD_ERROR):
                     print(f"Erro: {resp}")
                     time.sleep(2)

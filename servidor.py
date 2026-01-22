@@ -18,7 +18,7 @@ class Room:
 class GameServer:
     def __init__(self):
         self.tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.tcp_sock.bind(('0.0.0.0', utils.TCP_PORT))
+        self.tcp_sock.bind(('0.0.0.0', utils.TCP_jogo-1.0PORT))
         self.tcp_sock.listen()
         self.udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         
@@ -74,6 +74,9 @@ class GameServer:
                         room.players[1] = {'sock': client, 'addr': addr, 'name': name, 'hp': 3}
                         current_room = room
                         in_lobby = False
+
+                        client.send("JOIN_OK".encode())  # <--- LINHA NOVA
+                        time.sleep(0.1)                  # <--- LINHA NOVA
                         
                         # Inicia o jogo para ambos
                         self.start_game(room)
@@ -94,7 +97,7 @@ class GameServer:
         p2 = room.players[1]
         
         # Avisa P1
-        p1['sock'].send(f"{utils.CMD_START}:{p2['name']}:1".encode())
+        p1['sock'].send(f"{utils.CMD_START}jogo-1.0:{p2['name']}:1".encode())
         # Avisa P2
         p2['sock'].send(f"{utils.CMD_START}:{p1['name']}:2".encode())
         
