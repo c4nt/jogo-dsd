@@ -58,28 +58,10 @@ def desenhar_arena(p1_nome, p1_vida, p1_acao, p2_nome, p2_vida, p2_acao, flecha_
 
     # Flecha
     if 0 < flecha_x < 59:
-        # Se a flecha estiver na metade ESQUERDA da tela, assume que está indo pra direita (>)
-        # Se estiver na metade DIREITA e voltando, poderia ser <
-        # Mas o jeito mais fácil sem mudar o protocolo é verificar a origem lógica:
-        
-        # Vamos desenhar baseado na posição para simplificar:
-        char_ponta = '>'
-        char_corpo = '-'
-        
-        # Se você quiser ser perfeccionista, teríamos que enviar a direção pelo UDP.
-        # Mas um truque visual é: Se for turno do P2, a flecha é '<'.
-        # Como o utils não sabe de quem é o turno, vamos usar um caractere neutro ou manter assim.
-        
-        # Sugestão de visual neutro (uma "bola de fogo" ou pedra):
-        # cenario[int(flecha_y)][int(flecha_x)] = '*' 
-        
-        # OU mantemos a flecha > por enquanto para não complicar.
-        # Se quiser inverter:
-        # cenario[int(flecha_y)][int(flecha_x)] = '-'
-        # cenario[int(flecha_y)][int(flecha_x)+1] = '>' 
-        
-        # Para funcionar nos dois sentidos sem bugar:
-        try:
-            cenario[int(flecha_y)][int(flecha_x)] = '*' # Projétil neutro fica bom nos dois sentidos
-        except:
-            pass
+        cenario[int(flecha_y)][int(flecha_x)] = '-'
+        cenario[int(flecha_y)][int(flecha_x)+1] = '>'
+
+    print(f"\n {p1_nome} [HP:{p1_vida}]".ljust(30) + f"{p2_nome} [HP:{p2_vida}]".rjust(30))
+    print("-" * 60)
+    for linha in cenario: print("".join(linha))
+    print("-" * 60)

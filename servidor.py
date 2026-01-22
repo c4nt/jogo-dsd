@@ -137,64 +137,56 @@ class GameServer:
             room.turn_data[idx] = msg.split(":")[1]
 
     def resolve_turn(self, room):
+        # Identifica quem atacou e quem defendeu neste turno
         idx_atk = room.attacker_idx
-        idx_def = 1 - idx_atk 
+        idx_def = 1 - idx_atk # O outro jogador
         
         atk_choice = room.turn_data[idx_atk]
         def_choice = room.turn_data[idx_def]
         
-        # Lógica de Dano
+        # LÓGICA DE DANO CORRIGIDA
+        # Se o Defensor não defendeu a parte que foi atacada -> Dano nele
+        damage_dealt = False
         if atk_choice != def_choice:
             room.players[idx_def]['hp'] -= 1
+            damage_dealt = True
         
-        # --- DEFININDO A DIREÇÃO DA FLECHA ---
-        if idx_atk == 0:
-            # P1 Ataca (Esquerda -> Direita)
-            start_x = 8   # Sai da arma do P1
-            end_x = 52    # Vai até o corpo do P2
-        else:
-            # P2 Ataca (Direita -> Esquerda)
-            start_x = 52  # Sai da arma do P2
-            end_x = 8     # Vai até o corpo do P1
-
-        # Chama a animação com os pontos corretos
+        # Animação: A flecha sai APENAS do atacante em direção ao defensor
+        # Se P1 ataca: 10 -> 50. Se P2 ataca: 50 -> 10.
+        start_x = 10 if idx_atk == 0 else 50
+        end_x = 50 if idx_atk == 0 else 10
         self.stream_arrow(room, start_x, end_x, atk_choice)
 
-        # Prepara próximo turno (Inverte papéis)
+        # Prepara PRÓXIMO turno (Inverte papéis)
         room.attacker_idx = 1 - room.attacker_idx 
         next_role_p1 = "ATK" if room.attacker_idx == 0 else "DEF"
         next_role_p2 = "ATK" if room.attacker_idx == 1 else "DEF"
 
-        # Envia Resultados
+        # Verifica Fim de Jogo
         hp1 = room.players[0]['hp']
         hp2 = room.players[1]['hp']
+        
         status1 = "WIN" if hp2 <= 0 else "LOSE" if hp1 <= 0 else "NEXT"
         status2 = "WIN" if hp1 <= 0 else "LOSE" if hp2 <= 0 else "NEXT"
 
+        # Envia Resultado + O Papel do Próximo Turno
+        # Formato: RESULT:HP1:HP2:STATUS:ROLE
         room.players[0]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status1}:{next_role_p1}".encode())
-        room.players[1]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status2}:{next_role_p2}".encode())   
+        room.players[1]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status2}:{next_role_p2}".encode())
 
     def stream_arrow(self, room, start, end, height_code):
-        # --- O SEGREDO ESTÁ AQUI ---
-        # Se o inicio for menor que o fim, passo positivo (vai pra frente)
-        # Se o inicio for maior que o fim, passo negativo (vai pra tras)
-        step = 2 if start < end else -2
+        step = 2 if start < end else -2 # Define direção
+        y = 2 if height_code == utils.PART_HEAD else 3 if height_code == utils.PART_TORSO else 4
         
-        # Define altura Y
-        y = 4 # Pernas
-        if height_code == utils.PART_HEAD: y = 2
-        elif height_code == utils.PART_TORSO: y = 3
+        # Range precisa tratar start > end
+        steps = range(start, end, step)
         
-        # O range precisa do passo correto
-        for x in range(start, end, step):
+        for x in steps:
             msg = f"{utils.CMD_ANIMATION}:{x}:{y}"
-            
-            # Manda para os dois jogadores
+            # Manda para os dois
             for p in room.players:
                 self.udp_sock.sendto(msg.encode(), (p['addr'][0], utils.UDP_PORT))
-            
-            # Velocidade da animação
-            time.sleep(0.04)
+            time.sleep(0.05)
 
 if __name__ == "__main__":
     GameServer().start()
