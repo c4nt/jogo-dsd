@@ -8,10 +8,11 @@ class Room:
         self.id = room_id
         self.players = [
             {'sock': host_sock, 'addr': host_addr, 'name': host_name, 'hp': 3},
-            None # Player 2 entra depois
+            None
         ]
         self.turn_data = {}
-    
+        self.attacker_idx = 0 # 0 = Player 1 começa atacando, 1 = Player 2 começa
+
     def is_full(self):
         return self.players[1] is not None
 
@@ -96,12 +97,11 @@ class GameServer:
         p1 = room.players[0]
         p2 = room.players[1]
         
-        # Avisa P1
-        p1['sock'].send(f"{utils.CMD_START}jogo-1.0:{p2['name']}:1".encode())
-        # Avisa P2
-        p2['sock'].send(f"{utils.CMD_START}:{p1['name']}:2".encode())
+        # Avisa P1 (ID 1) que ele começa ATACANDO (ATK)
+        p1['sock'].send(f"{utils.CMD_START}:{p2['name']}:1:ATK".encode())
+        # Avisa P2 (ID 2) que ele começa DEFENDENDO (DEF)
+        p2['sock'].send(f"{utils.CMD_START}:{p1['name']}:2:DEF".encode())
         
-        # Inicia loop da partida
         threading.Thread(target=self.game_loop, args=(room,)).start()
 
     def game_loop(self, room):
@@ -137,53 +137,55 @@ class GameServer:
             room.turn_data[idx] = msg.split(":")[1]
 
     def resolve_turn(self, room):
-        p1_ch = room.turn_data[0]
-        p2_ch = room.turn_data[1]
+        # Identifica quem atacou e quem defendeu neste turno
+        idx_atk = room.attacker_idx
+        idx_def = 1 - idx_atk # O outro jogador
         
-        # P1 Ataca P2 (Simples: se mirou onde não defendeu, dano)
-        # Para ser justo, vamos fazer P1 ataca P2 E P2 ataca P1 no mesmo turno?
-        # Ou um ataca e outro defende?
-        # REGRA ATUALIZADA: Quem ataca? Vamos fazer "Ambos Atiram". 
-        # Se P1 Atira Cabeça e P2 Defende Cabeça -> Defendeu.
-        # Se P1 Atira Cabeça e P2 Defende Perna -> P2 Toma Dano.
+        atk_choice = room.turn_data[idx_atk]
+        def_choice = room.turn_data[idx_def]
         
-        # Dano em P2?
-        if p1_ch != p2_ch: room.players[1]['hp'] -= 1
-        # Dano em P1? (P2 também atirou no P1?)
-        # Pela sua regra: "Um atacando e um defendendo". 
-        # Vamos assumir alternância? Turno 1: P1 Ataca. Turno 2: P2 Ataca.
-        # OU: Ambos são arqueiros, ambos atiram ao mesmo tempo. 
-        # VOU MANTER: Ambos atiram e defendem ao mesmo tempo (mais dinâmico).
-        if p2_ch != p1_ch: room.players[0]['hp'] -= 1
+        # LÓGICA DE DANO CORRIGIDA
+        # Se o Defensor não defendeu a parte que foi atacada -> Dano nele
+        damage_dealt = False
+        if atk_choice != def_choice:
+            room.players[idx_def]['hp'] -= 1
+            damage_dealt = True
         
-        # Animação UDP (Duas flechas se cruzando!)
-        self.stream_arrows(room, p1_ch, p2_ch)
-        
-        # Envia Estado
+        # Animação: A flecha sai APENAS do atacante em direção ao defensor
+        # Se P1 ataca: 10 -> 50. Se P2 ataca: 50 -> 10.
+        start_x = 10 if idx_atk == 0 else 50
+        end_x = 50 if idx_atk == 0 else 10
+        self.stream_arrow(room, start_x, end_x, atk_choice)
+
+        # Prepara PRÓXIMO turno (Inverte papéis)
+        room.attacker_idx = 1 - room.attacker_idx 
+        next_role_p1 = "ATK" if room.attacker_idx == 0 else "DEF"
+        next_role_p2 = "ATK" if room.attacker_idx == 1 else "DEF"
+
+        # Verifica Fim de Jogo
         hp1 = room.players[0]['hp']
         hp2 = room.players[1]['hp']
         
         status1 = "WIN" if hp2 <= 0 else "LOSE" if hp1 <= 0 else "NEXT"
         status2 = "WIN" if hp1 <= 0 else "LOSE" if hp2 <= 0 else "NEXT"
+
+        # Envia Resultado + O Papel do Próximo Turno
+        # Formato: RESULT:HP1:HP2:STATUS:ROLE
+        room.players[0]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status1}:{next_role_p1}".encode())
+        room.players[1]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status2}:{next_role_p2}".encode())
+
+    def stream_arrow(self, room, start, end, height_code):
+        step = 2 if start < end else -2 # Define direção
+        y = 2 if height_code == utils.PART_HEAD else 3 if height_code == utils.PART_TORSO else 4
         
-        # Se ambos morrerem ao mesmo tempo: EMPATE (DRAW)
-        if hp1 <= 0 and hp2 <= 0: status1 = status2 = "DRAW"
-
-        room.players[0]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status1}".encode())
-        room.players[1]['sock'].send(f"{utils.CMD_RESULT}:{hp1}:{hp2}:{status2}".encode())
-
-    def stream_arrows(self, room, target1, target2):
-        # Manda pacotes UDP
-        for i in range(10, 50, 2):
-            # Flecha P1 -> P2 (Esq -> Dir)
-            y1 = 2 if target1 == utils.PART_HEAD else 3 if target1 == utils.PART_TORSO else 4
-            msg1 = f"{utils.CMD_ANIMATION}:{i}:{y1}"
-            
-            # Flecha P2 -> P1 (Dir -> Esq) - opcional, mas legal visualmente
-            # Simplificando: vamos mandar só a flecha do P1 para testar primeiro
-            
-            self.udp_sock.sendto(msg1.encode(), (room.players[0]['addr'][0], utils.UDP_PORT))
-            self.udp_sock.sendto(msg1.encode(), (room.players[1]['addr'][0], utils.UDP_PORT))
+        # Range precisa tratar start > end
+        steps = range(start, end, step)
+        
+        for x in steps:
+            msg = f"{utils.CMD_ANIMATION}:{x}:{y}"
+            # Manda para os dois
+            for p in room.players:
+                self.udp_sock.sendto(msg.encode(), (p['addr'][0], utils.UDP_PORT))
             time.sleep(0.05)
 
 if __name__ == "__main__":

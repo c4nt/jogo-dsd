@@ -4,16 +4,23 @@ import sys
 import utils
 import time
 
-# Estado Global
+# --- ESTADO GLOBAL DO JOGO ---
 game_state = {
-    "p1_nome": "Eu", "p2_nome": "Inimigo",
-    "p1_hp": 3, "p2_hp": 3,
-    "p1_acao": "IDLE", "p2_acao": "IDLE",
-    "flecha_x": -1, "flecha_y": -1
+    "p1_nome": "Eu", 
+    "p2_nome": "Inimigo",
+    "p1_hp": 3, 
+    "p2_hp": 3,
+    "p1_acao": "IDLE", 
+    "p2_acao": "IDLE",
+    "flecha_x": -1, 
+    "flecha_y": -1,
+    "my_role": "IDLE"  # NOVO: Guarda se sou "ATK" (Atacante) ou "DEF" (Defensor)
 }
+
 running = True
 
 def renderizar():
+    """Desenha a tela usando o utils"""
     utils.limpar_tela()
     utils.mostrar_titulo()
     utils.desenhar_arena(
@@ -23,33 +30,41 @@ def renderizar():
     )
 
 def udp_listener(sock):
+    """Escuta dados rápidos de animação (UDP)"""
     while running:
         try:
             data, _ = sock.recvfrom(utils.BUFFER_SIZE)
             msg = data.decode()
             if msg.startswith(utils.CMD_ANIMATION):
+                # Formato: ANIM:X:Y
                 _, x, y = msg.split(":")
                 game_state["flecha_x"] = int(x)
                 game_state["flecha_y"] = int(y)
                 renderizar()
-        except: break
+        except: 
+            break
 
 def main():
     global running, game_state
     utils.limpar_tela()
     
-    # --- CONEXÃO INICIAL ---
+    # --- 1. CONEXÃO INICIAL ---
+    print("--- CONECTAR ---")
     ip = input("IP do Servidor: ")
     nome = input("Seu Nickname: ")
     
     tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp.settimeout(5.0) # Timeout para não travar se IP estiver errado
     try:
         tcp.connect((ip, utils.TCP_PORT))
+        tcp.settimeout(None) # Volta ao normal
         tcp.send(nome.encode())
-    except:
-        print("Não foi possível conectar ao servidor."); return
+    except Exception as e:
+        print(f"Erro ao conectar: {e}")
+        print("Verifique o IP e o Firewall do servidor.")
+        return
 
-    # --- LOBBY ---
+    # --- 2. LOBBY (SALA DE ESPERA) ---
     in_lobby = True
     while in_lobby:
         utils.limpar_tela()
@@ -63,47 +78,56 @@ def main():
             resp = tcp.recv(utils.BUFFER_SIZE).decode()
             if resp == utils.CMD_WAIT:
                 print("Sala criada! Aguardando oponente entrar...")
-                # Fica bloqueado aqui até receber START
-                in_lobby = False
+                in_lobby = False # Vai para o loop do jogo esperar o START
         
         elif op == '2':
             tcp.send(utils.CMD_LIST.encode())
-            lista = tcp.recv(utils.BUFFER_SIZE).decode()
-            print("\n" + lista)
-            rid = input("Digite o ID da sala para entrar (ou ENTER para voltar): ")
-            if rid:
-                tcp.send(f"{utils.CMD_JOIN}:{rid}".encode())
-                resp = tcp.recv(utils.BUFFER_SIZE).decode()
-                if resp == "JOIN_OK":                  # <--- MUDOU AQUI (Era só verificar erro antes)
-                    print("Entrando na sala...")
-                    in_lobby = False
-                elif resp.startswith(utils.CMD_ERROR):
-                    print(f"Erro: {resp}")
-                    time.sleep(2)
-                if resp.startswith(utils.CMD_ERROR):
-                    print(f"Erro: {resp}")
-                    time.sleep(2)
-                else:
-                    # Se não deu erro, assume que o próximo msg será START
-                    # Mas o socket.recv lê bytes, então o START pode estar no buffer já
-                    # Vamos tratar isso no loop de jogo
-                    in_lobby = False
-    
-    # --- SETUP UDP ---
+            try:
+                lista = tcp.recv(utils.BUFFER_SIZE).decode()
+                print("\n" + lista)
+                rid = input("Digite o ID da sala (ou ENTER para voltar): ")
+                if rid:
+                    tcp.send(f"{utils.CMD_JOIN}:{rid}".encode())
+                    # Espera confirmação JOIN_OK
+                    resp = tcp.recv(utils.BUFFER_SIZE).decode()
+                    
+                    if resp == "JOIN_OK":
+                        print("Entrando na sala...")
+                        in_lobby = False
+                    elif resp.startswith(utils.CMD_ERROR):
+                        print(f"Erro: {resp}")
+                        time.sleep(2)
+            except:
+                print("Erro ao comunicar com lobby.")
+                break
+
+    # --- 3. SETUP UDP ---
     udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp.bind(('0.0.0.0', utils.UDP_PORT))
+    # Tenta abrir porta UDP. Se der erro (ex: rodando 2 clientes no mesmo PC), avisa mas continua.
+    try:
+        udp.bind(('0.0.0.0', utils.UDP_PORT))
+    except:
+        print("Aviso: Porta UDP ocupada. A animação pode não funcionar neste cliente se for local.")
+    
     threading.Thread(target=udp_listener, args=(udp,), daemon=True).start()
 
-    # --- LOOP DO JOGO ---
-    # Espera sinal de START oficial
+    # --- 4. LOOP DO JOGO (PARTIDA) ---
     while running:
         try:
+            # Fica travado aqui esperando mensagem do servidor (START ou RESULT)
             msg = tcp.recv(utils.BUFFER_SIZE).decode()
             if not msg: break
             
+            # --- CASO A: INÍCIO DO JOGO ---
             if msg.startswith(utils.CMD_START):
-                # START:NomeOponente:ID
-                _, op_nome, my_id = msg.split(":")
+                # Msg: START:NomeOponente:SeuID:ROLE
+                parts = msg.split(":")
+                op_nome = parts[1]
+                my_id = parts[2]
+                role = parts[3] # "ATK" ou "DEF"
+                
+                game_state['my_role'] = role
+                
                 if my_id == '1':
                     game_state['p1_nome'] = nome
                     game_state['p2_nome'] = op_nome
@@ -111,60 +135,68 @@ def main():
                     game_state['p1_nome'] = op_nome
                     game_state['p2_nome'] = nome
                 
-                print("\nOPONENTE ENCONTRADO! O JOGO VAI COMEÇAR...")
+                print(f"\nJOGO INICIADO! Papel inicial: {role}")
                 time.sleep(2)
                 renderizar()
                 
+            # --- CASO B: RESULTADO DO TURNO ---
             elif msg.startswith(utils.CMD_RESULT):
-                # RESULT:HP1:HP2:STATUS
+                # Msg: RESULT:HP1:HP2:STATUS:NEXT_ROLE
                 parts = msg.split(":")
                 game_state['p1_hp'] = int(parts[1])
                 game_state['p2_hp'] = int(parts[2])
-                game_state['flecha_x'] = -1 # Reseta flecha
+                status = parts[3]
+                next_role = parts[4] # O que serei no próximo turno
+                
+                game_state['my_role'] = next_role
+                game_state['flecha_x'] = -1 # Reseta animação
                 renderizar()
                 
-                status = parts[3]
                 if status == "WIN":
-                    print("\n\n>>> VICTORY! <<<")
-                    running = False
+                    print("\n\n>>> VOCÊ VENCEU! <<<"); running = False
                 elif status == "LOSE":
-                    print("\n\n>>> GAME OVER <<<")
-                    running = False
+                    print("\n\n>>> GAME OVER... <<<"); running = False
                 elif status == "DRAW":
-                    print("\n\n>>> EMPATE <<<")
-                    running = False
-                # Se for NEXT, continua o loop
-                
-            # SE NÃO É RESULTADO NEM START, É HORA DE JOGAR?
-            # A lógica é: depois de receber resultado (ou start), eu jogo.
-            
+                    print("\n\n>>> EMPATE! <<<"); running = False
+
+            # --- SE O JOGO CONTINUA, É HORA DE JOGAR ---
             if running:
-                print("\n--- SUA VEZ ---")
-                print(f"Escolha alvo/defesa: {utils.PART_HEAD}, {utils.PART_TORSO}, {utils.PART_LEGS}")
+                # Mostra instrução baseada no papel (Atacar ou Defender)
+                acao_txt = "ATACAR (Sua vez de atirar!)" if game_state['my_role'] == "ATK" else "DEFENDER (Proteja-se!)"
+                print(f"\n--- {acao_txt} ---")
                 
+                if game_state['my_role'] == "ATK":
+                    print(f"Onde mirar? ({utils.PART_HEAD}, {utils.PART_TORSO}, {utils.PART_LEGS})")
+                else:
+                    print(f"Onde posicionar o escudo? ({utils.PART_HEAD}, {utils.PART_TORSO}, {utils.PART_LEGS})")
+                
+                # Validação do Input
                 valid = False
                 while not valid:
                     escolha = input(">> ").upper()
                     if "CAB" in escolha: escolha = utils.PART_HEAD; valid = True
                     elif "TRO" in escolha: escolha = utils.PART_TORSO; valid = True
                     elif "PER" in escolha: escolha = utils.PART_LEGS; valid = True
+                    else: print("Opção inválida. Tente CABECA, TRONCO ou PERNAS.")
                 
-                # Feedback visual local imediato
-                if game_state['p1_nome'] == nome: game_state['p1_acao'] = escolha
+                # Atualiza visual localmente para feedback imediato
+                is_p1 = (game_state['p1_nome'] == nome)
+                if is_p1: game_state['p1_acao'] = escolha
                 else: game_state['p2_acao'] = escolha
                 renderizar()
                 
-                print("Enviando... Aguarde o oponente.")
+                print("Aguardando oponente...")
                 tcp.send(f"{utils.CMD_CHOICE}:{escolha}".encode())
                 
-                # Agora o loop volta pro inicio e espera tcp.recv (o Resultado)
-                
+                # O loop reinicia e volta para o tcp.recv esperando o resultado
+
         except Exception as e:
-            print(e)
+            print(f"Erro ou desconexão: {e}")
             break
             
     tcp.close()
     udp.close()
+    print("Fim da execução.")
 
 if __name__ == "__main__":
     main()
